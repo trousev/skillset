@@ -1,0 +1,100 @@
+name: Evals
+
+# LLM-BASED EVALUATION — runs DeepSeek API to judge skill quality.
+#
+# SECURITY: This workflow runs ONLY on:
+#   1. Push to main (maintainers only — fork PRs can't push to main)
+#   2. Manual workflow_dispatch (maintainers only)
+#
+# NEVER change this to pull_request or pull_request_target —
+# those would leak DEEPSEEK_API_KEY to any fork PR.
+#
+# To run evals on a PR: merge to main first, or ask a maintainer to
+# trigger workflow_dispatch with the branch name.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+      - 'evals/**'
+      - '.github/workflows/evals.yml'
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: 'Plugin to evaluate (directory name under plugins/)'
+        required: false
+        default: 'product-planning'
+      scenario_file:
+        description: 'Path to scenario file'
+        required: false
+        default: 'evals/product-planning/scenarios.md'
+
+# Only one eval at a time to avoid burning API credits
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    # Extra safeguard: only run on the main repo, not forks
+    if: github.repository == 'trousev/skillset'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate plugin schema (fast check first)
+        run: |
+          PLUGIN="${{ github.event.inputs.plugin || 'product-planning' }}"
+          python3 evals/runner/validate.py "plugins/$PLUGIN"
+
+      - name: Run eval scenarios (dry-run if no Claude CLI)
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          PLUGIN="${{ github.event.inputs.plugin || 'product-planning' }}"
+          SCENARIO="${{ github.event.inputs.scenario_file || 'evals/product-planning/scenarios.md' }}"
+
+          # Check if claude CLI is available
+          if command -v claude &> /dev/null; then
+            echo "Claude CLI found, running full evals..."
+            python3 evals/runner/judge.py \
+              --scenario "$SCENARIO" \
+              --skill "$PLUGIN"
+          else
+            echo "Claude CLI not available in CI (expected — no Anthropic/DeepSeek key for Claude Code itself)."
+            echo "Running scenario parsing validation only..."
+            python3 evals/runner/judge.py \
+              --scenario "$SCENARIO" \
+              --skill "$PLUGIN" \
+              --dry-run
+            echo ""
+            echo "📝 NOTE: Full LLM-as-judge evals require:"
+            echo "   1. Claude Code CLI installed in CI runner"
+            echo "   2. ANTHROPIC_AUTH_TOKEN configured (or equivalent)"
+            echo "   Currently only schema + scenario structure are validated."
+          fi
+
+  # Report eval status
+  report:
+    needs: evals
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Eval results
+        run: |
+          if [ "${{ needs.evals.result }}" = "success" ]; then
+            echo "✅ Evals passed"
+          elif [ "${{ needs.evals.result }}" = "skipped" ]; then
+            echo "⏭️ Evals skipped"
+          else
+            echo "❌ Evals failed — check logs above"
+          fi

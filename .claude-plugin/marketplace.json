@@ -1,0 +1,17 @@
+{
+  "name": "trousev-skillset",
+  "owner": {
+    "name": "trousev",
+    "email": "trousev@github"
+  },
+  "description": "A curated marketplace of Claude Code plugins and skills — product planning, architecture, and developer productivity.",
+  "plugins": [
+    {
+      "name": "product-planning",
+      "source": "./plugins/product-planning",
+      "description": "Interactive 4-step feature planning interview: Product Questions → Technical Implementation → Implementation Details → Attack & Challenge. Outputs a complete feature spec.",
+      "version": "1.0.0",
+      "tags": ["planning", "product", "specs", "interview"]
+    }
+  ]
+}

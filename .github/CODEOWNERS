@@ -1,0 +1,12 @@
+# These owners will be requested for review when someone opens a PR
+# that modifies the matching files.
+
+# Workflow security — any changes to CI/CD must be reviewed by maintainer
+/.github/workflows/   @trousev
+/.github/CODEOWNERS    @trousev
+
+# Evals system
+/evals/                @trousev
+
+# Marketplace manifest
+/.claude-plugin/       @trousev

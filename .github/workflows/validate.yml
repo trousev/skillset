@@ -1,0 +1,99 @@
+name: Validate
+
+# Runs on every PR and push to main.
+# STATIC VALIDATION ONLY — no secrets, no LLM access.
+# Safe to run on forks.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/**'
+      - 'evals/runner/validate.py'
+      - '.github/workflows/validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/**'
+      - 'evals/runner/validate.py'
+      - '.github/workflows/validate.yml'
+
+# Cancel in-progress runs on the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate marketplace
+        run: python3 evals/runner/validate.py --marketplace
+
+      - name: Validate all plugins
+        run: python3 evals/runner/validate.py --all
+
+  # Additional checks that don't need Python
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check YAML frontmatter in all SKILL.md files
+        run: |
+          set -e
+          errors=0
+          for f in $(find plugins -name 'SKILL.md' -type f); do
+            echo "Checking: $f"
+            # Check that file starts with ---
+            if ! head -1 "$f" | grep -q '^---$'; then
+              echo "ERROR: $f does not start with YAML frontmatter (---)"
+              errors=$((errors + 1))
+            fi
+            # Check for curl | bash patterns
+            if grep -n 'curl.*|.*bash\|curl.*|.*sh' "$f"; then
+              echo "ERROR: $f contains curl | bash pattern"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ $errors -gt 0 ]; then
+            echo "Found $errors error(s)"
+            exit 1
+          fi
+          echo "All SKILL.md files passed basic checks"
+
+      - name: Check no secrets in plaintext
+        run: |
+          set -e
+          # Check for common secret patterns
+          patterns=(
+            'sk-[a-zA-Z0-9]\{20,\}'
+            'sk-or-v1-[a-zA-Z0-9]\{20,\}'
+            'AIza[0-9A-Za-z_-]\{35\}'
+            'hf_[a-zA-Z0-9]\{20,\}'
+          )
+          errors=0
+          for pattern in "${patterns[@]}"; do
+            matches=$(grep -rn "$pattern" plugins/ evals/ .claude-plugin/ 2>/dev/null || true)
+            if [ -n "$matches" ]; then
+              echo "SECURITY ALERT: Possible secret found:"
+              echo "$matches" | sed 's/\(sk-[a-zA-Z0-9]\{4\}\)[a-zA-Z0-9]*/\1***/g'
+              errors=$((errors + 1))
+            fi
+          done
+          if [ $errors -gt 0 ]; then
+            echo "FOUND $errors POTENTIAL SECRET LEAK(S). Remove secrets and force-push to erase history."
+            exit 1
+          fi
+          echo "No secrets detected"
