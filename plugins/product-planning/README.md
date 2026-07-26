@@ -27,7 +27,7 @@ Claude interviews you one question at a time. You answer, and the spec builds up
 /product-planning --auto user-authentication
 ```
 
-Claude plays both interviewer and interviewee — asking deep questions and self-answering them with research-backed responses. No human input needed. Ideal for:
+Claude plays both interviewer and interviewee — but instead of answering its own questions, it spawns **independent sub-agents** to play the developer/stakeholder role. Each question fires a fresh agent that researches the codebase and answers from its own perspective. This creates a genuine two-party dialogue, not a monologue. Ideal for:
 - Another AI agent invoking this skill
 - Rapid prototyping and brainstorming
 - Generating an initial spec to refine later

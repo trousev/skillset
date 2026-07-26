@@ -10,7 +10,7 @@
       "name": "product-planning",
       "source": "./plugins/product-planning",
       "description": "Interactive 4-step feature planning interview: Product Questions → Technical Implementation → Implementation Details → Attack & Challenge. Outputs a complete feature spec.",
-      "version": "1.0.0",
+      "version": "1.2.0",
       "tags": ["planning", "product", "specs", "interview"]
     }
   ]

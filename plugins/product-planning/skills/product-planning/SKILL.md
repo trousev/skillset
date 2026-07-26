@@ -14,14 +14,16 @@ This skill has two modes:
 The AI interviews a human developer. Questions are asked one at a time, and the AI waits for each answer before proceeding. Best for when a real person is available to answer questions about product requirements, technical constraints, and business context.
 
 ### Auto Mode (`--auto`)
-The AI plays BOTH roles — interviewer AND interviewee. Instead of waiting for human answers, the AI generates thorough, research-backed answers itself. All 4 steps still complete with the same rigor and exit conditions. Best for:
+A true two-party dialogue: the main Claude session acts as the **interviewer** (PM/Tech Lead), spawning **independent sub-agents** to play the **interviewee** (developer/stakeholder). Each question fires a fresh agent that reasons independently, researches the codebase, and answers from its own perspective — not the interviewer's. All 4 steps complete with the same rigor and exit conditions. Best for:
 - Another AI agent invoking this skill on behalf of a user
 - Rapid prototyping and brainstorming without a human in the loop
-- Generating an initial spec that a human can later refine
+- Getting genuinely independent perspectives (the interviewee agent can disagree, push back, or surface unexpected concerns)
 
 **Invocation:** `/product-planning --auto <feature-name>`
 
-**Auto mode is NOT** a shortcut or dumbed-down version. It's the same thorough 4-step interview — just self-driven. The AI must still research the codebase, ask tough questions, and produce a complete spec.
+**Why agents instead of self-answer:** A single AI answering its own questions creates an echo chamber — it confirms its own assumptions. Independent sub-agents reason separately, research the codebase with fresh eyes, and can genuinely challenge the interviewer's framing. This is a real dialogue, not a monologue.
+
+**Auto mode is NOT** a shortcut. It's the same thorough 4-step interview — just with an AI playing the human role with genuine independence.
 
 ## Interview Style
 
@@ -32,15 +34,47 @@ The AI plays BOTH roles — interviewer AND interviewee. Instead of waiting for 
 - Show that you're actively listening by referencing previous answers in follow-up questions.
 
 ### Auto Mode
-- **Ask and answer questions ONE at a time**, but do NOT wait for external input.
+- **Ask questions ONE at a time**, spawning an independent sub-agent for each answer.
 - For each question:
-  1. **Ask** it clearly (as the PM/Tech Lead)
-  2. **Answer** it thoroughly (as a knowledgeable developer/stakeholder)
-  3. **Record** the Q&A in the spec
-  4. **Proceed** to the next question
-- Each answer must be substantive — reference the codebase, consider trade-offs, note assumptions.
-- Maintain the same depth and rigor as interactive mode.
-- Mark assumptions explicitly: "Assumption: ..." when guessing at something a real stakeholder would know.
+  1. **Formulate** the question clearly (as the PM/Tech Lead)
+  2. **Spawn an interviewee agent** using the `Agent` tool with `run_in_background: false` and `subagent_type: "general-purpose"`
+  3. **Read the answer** — the agent researches independently and answers from the developer's perspective
+  4. **Record** the Q&A in the spec
+  5. **If the answer is shallow or hand-wavy**, ask a pointed follow-up (spawn another agent)
+  6. **Proceed** to the next question when satisfied
+- Each question spawns a **fresh** agent — no shared reasoning state with the interviewer.
+- Maintain a conversation transcript (Q1, A1, Q2, A2, …) and pass it to each new agent so it has full context.
+- The interviewee agent must be instructed to research the codebase, be specific, and mark assumptions.
+
+### Interviewee Agent Template
+When spawning an interviewee agent, use this prompt structure:
+
+```
+You are playing the role of a {ROLE} being interviewed about feature planning for the project at {CODEBASE_PATH}.
+
+The feature being planned is: {FEATURE_NAME}
+Current step: Step {N} — {STEP_NAME}
+Spec produced so far:
+{SPEC_CONTENT}
+
+Previous conversation:
+{PREVIOUS_Q_AND_A}
+
+The PM asks you: {QUESTION}
+
+Your job:
+1. RESEARCH the codebase — search for relevant patterns, files, conventions, and existing similar features
+2. ANSWER as a real {ROLE} would — with specific technical details, references to actual files/patterns, honest trade-offs, and concrete suggestions
+3. If the question is about something you genuinely can't determine (business priority, user preference), provide your best educated guess and mark it as "Assumption: ..."
+4. Be opinionated — don't hedge. If a proposed approach is wrong for this codebase, say so.
+5. Keep your answer substantive but focused — answer the specific question, don't wander into unrelated territory.
+```
+
+**ROLE** should be set based on the current step:
+- Step 1: "product manager" or "stakeholder"
+- Step 2: "senior developer" or "tech lead"
+- Step 3: "developer familiar with this codebase"
+- Step 4: "skeptical senior engineer reviewing the plan"
 
 ## Skill Invocation
 
@@ -75,11 +109,7 @@ Ask questions organically to understand:
 - What's the success metric? How will we know this worked?
 
 ### Auto Mode behavior
-Self-answer each question as if you were the product owner:
-- Draw reasonable answers from the feature name, codebase context, and common patterns.
-- For "who are the users" — infer from the project's README, target platform, and existing user flows.
-- For "success metrics" — propose measurable outcomes (e.g., "reduce time to X by Y%", "support N concurrent users").
-- When you genuinely don't know something a human would (e.g., business priority), state an assumption clearly and proceed.
+Spawn an independent agent for each product question. Use ROLE: "product manager" or "stakeholder". The agent should infer user personas from the project's README, target platform, and existing user flows. For success metrics, it should propose measurable outcomes. When business context is unknowable, the agent must state assumptions clearly.
 
 ### Exit Condition
 Move to Step 2 when you have:
@@ -133,11 +163,7 @@ Search codebase for:
 Ask about architecture, data models, state management, integrations, security — organically based on what you're researching.
 
 ### Auto Mode behavior
-Self-answer each technical question based on codebase research:
-- Search the codebase BEFORE answering — find real patterns, not imagined ones.
-- Propose architectures that match the existing codebase style (same frameworks, patterns, conventions).
-- When the codebase has no relevant patterns, note that and propose a standard approach with rationale.
-- For each architectural decision, explain WHY this approach over alternatives found in research.
+Spawn an independent agent for each technical question. Use ROLE: "senior developer" or "tech lead". The agent MUST search the codebase before answering — finding real patterns, not imagined ones. For each architectural decision, the agent should explain WHY this approach over alternatives it finds. When the codebase has no relevant patterns, the agent notes that and proposes a standard approach with rationale.
 
 ### Exit Condition
 Move to Step 3 when you have:
@@ -186,11 +212,7 @@ Re-read spec, scan codebase for:
 Ask specifics about data models, UI components, error handling, accessibility, performance, security, analytics, localization, theming, navigation, permissions, versioning, testing, dependencies, and release — organically based on what you're researching.
 
 ### Auto Mode behavior
-Self-answer implementation questions by finding and following real codebase patterns:
-- Find specific files and code examples to reference in answers (e.g., "follow the pattern in src/models/User.ts").
-- Propose concrete field names, types, and relationships — not abstract descriptions.
-- Follow existing naming conventions, directory structures, and design patterns exactly.
-- For each implementation area, answer with enough detail that an engineer could start coding immediately.
+Spawn an independent agent for each implementation question. Use ROLE: "developer familiar with this codebase". The agent must find specific files and code examples to reference (e.g., "follow the pattern in src/models/User.ts"). Answers must propose concrete field names, types, relationships — not abstract descriptions. The agent must follow existing naming conventions, directory structures, and design patterns exactly. Each answer should have enough detail that an engineer could start coding immediately.
 
 ### Exit Condition
 Move to Step 4 when you have detailed answers for all critical implementation areas.
@@ -246,13 +268,16 @@ Be merciless. Challenge the developer on:
 **Be persistent — don't accept shallow answers.** If a risk is hand-waved away, drill deeper.
 
 ### Auto Mode behavior
-This is the most important step in auto mode — be genuinely adversarial:
-- Read the entire spec produced so far and ACTUALLY try to find flaws.
-- Each challenge must reference a specific part of the plan.
-- Self-answer each challenge with a concrete mitigation or design change — never "we'll handle it later."
-- If a challenge reveals a real gap in the plan, UPDATE the earlier sections to fix it.
-- Loop: challenge → self-defend → if defense is weak, challenge harder → update spec → next challenge.
-- The goal is to produce a spec that would survive a real engineering review.
+This is the most important step in auto mode. Use ROLE: "skeptical senior engineer reviewing the plan". Each challenge spawns an independent adversarial agent that reads the entire spec so far and ACTUALLY tries to find flaws. Because the agent is independent, it has no stake in defending the plan — it can be genuinely critical.
+
+**Two-phase attack pattern:**
+1. **Challenge phase** — Spawn an agent with the prompt: "You are a skeptical senior engineer. Read this spec and find the 3 biggest flaws, risks, or missing pieces. Be merciless. Reference specific sections."
+2. **Defense phase** — For each challenge the agent raises, either:
+   - Accept it and UPDATE the spec to fix the gap
+   - If the challenge seems weak, spawn a second agent to judge: "Is this challenge valid? If so, how should the plan address it?"
+3. **Loop** until the challenge agent returns "no significant issues found" or all issues are addressed in the spec.
+
+Each challenge agent is fresh and independent — it doesn't know what previous agents found, which prevents groupthink. The goal is a spec that survives multiple independent adversarial reviews.
 
 ### Exit Condition
 When all tough questions are answered satisfactorily and you're confident the implementation will work.
@@ -302,11 +327,13 @@ The skill completes when:
 - ❌ **Rushing**: A good plan takes time. Don't skip steps to finish faster.
 
 ### Auto Mode Anti-Patterns
-- ❌ **Short, generic self-answers**: Each answer must be as thorough as a real developer's would be. "We'll use a REST API" is not enough — specify endpoints, data shapes, error codes.
-- ❌ **Skipping codebase research**: Auto mode is NOT an excuse to skip research. Search MORE, not less — you have no human to correct you.
-- ❌ **Unquestioned assumptions**: Mark assumptions explicitly. When you guess, say so: "Assumption: the database supports JSON columns."
-- ❌ **Rubber-stamping in Step 4**: The attack must be real. If you can't find flaws, you're not looking hard enough. Every plan has weaknesses.
-- ❌ **Shortcutting exit conditions**: Every checkbox must be genuinely satisfied. Auto mode doesn't relax quality — it raises it, because there's no human to catch sloppiness.
+- ❌ **Self-answering instead of spawning agents**: Never answer your own questions in auto mode. Always spawn an independent agent for each answer. The whole point is independence.
+- ❌ **Reusing the same agent**: Each question gets a FRESH agent. Reusing an agent with SendMessage creates shared reasoning state — that's just self-answer with extra steps.
+- ❌ **Vague agent prompts**: Give the agent specific context — the feature, the spec so far, the conversation history, the exact question, and what to research.
+- ❌ **Accepting shallow agent answers**: If an agent's answer is thin, spawn a follow-up agent: "The previous answer to {question} was shallow. Dig deeper. Find specific files, patterns, and trade-offs."
+- ❌ **Skipping codebase research in agent prompts**: Always instruct the agent to research. An agent without research context is just guessing.
+- ❌ **Rubber-stamping in Step 4**: Spawn genuinely adversarial agents. If an agent finds nothing wrong, spawn another with: "Try harder. Every plan has weaknesses. Find them."
+- ❌ **Not passing conversation history**: Each agent needs the full Q&A transcript to give contextually relevant answers. Don't make agents guess what was already discussed.
 
 ## Notes
 
@@ -316,4 +343,4 @@ The skill completes when:
 - Be persistent — don't accept shallow answers.
 - Challenge everything in Step 4.
 - **Never implement — just plan.**
-- **Auto mode note:** The spec file should be indistinguishable from one produced with a human. If a reader can tell it was auto-generated, you didn't try hard enough.
+- **Auto mode note:** In auto mode, the quality of the spec depends on the independence and thoroughness of the agents you spawn. Give them rich context, demand research, and don't hesitate to re-spawn if an answer is weak. A spec produced via agent dialogue should be indistinguishable from one produced with a human.
