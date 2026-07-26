@@ -47,7 +47,9 @@ Every plugin MUST have `.claude-plugin/plugin.json`:
   "name": "my-plugin",
   "version": "1.0.0",
   "description": "Clear description of what this plugin provides and when to use it.",
-  "author": "your-github-handle",
+  "author": {
+    "name": "your-github-handle"
+  },
   "license": "MIT",
   "keywords": ["category", "use-case"]
 }
@@ -58,7 +60,7 @@ Every plugin MUST have `.claude-plugin/plugin.json`:
 | `name` | ✅ | kebab-case, lowercase letters/numbers/hyphens, max 64 chars |
 | `version` | ✅ | SemVer (`x.y.z`) |
 | `description` | ✅ | What it does AND when to use it, max 1024 chars |
-| `author` | ✅ | Your GitHub handle |
+| `author` | ✅ | Object with `name` (required) and optional `email` |
 | `license` | ✅ | SPDX identifier (MIT, Apache-2.0, etc.) |
 | `keywords` | ✅ | Help users discover your plugin |
 

@@ -178,7 +178,7 @@ def validate_plugin_json(plugin_dir: str) -> bool:
         "name": str,
         "version": str,
         "description": str,
-        "author": str,
+        "author": dict,
         "license": str,
     }
     for field, ftype in required.items():
@@ -188,6 +188,15 @@ def validate_plugin_json(plugin_dir: str) -> bool:
         elif not isinstance(data[field], ftype):
             error(f"'{field}' must be a {ftype.__name__}")
             all_ok = False
+
+    if "author" in data and isinstance(data["author"], dict):
+        if "name" not in data["author"]:
+            error("author.name is required")
+            all_ok = False
+        else:
+            ok(f"author: {data['author']['name']}")
+        if "email" in data["author"]:
+            ok(f"author email: {data['author']['email']}")
 
     if "name" in data:
         if not re.match(r"^[a-z0-9-]+$", data["name"]):
