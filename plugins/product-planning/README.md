@@ -15,11 +15,24 @@ The output lands in `./specs/FEATURE-<name>.md`.
 
 ## Usage
 
+### Interactive Mode (default)
 ```
 /product-planning user-authentication
 ```
 
-Or just ask Claude to plan a feature — the skill description triggers automatically.
+Claude interviews you one question at a time. You answer, and the spec builds up gradually.
+
+### Auto Mode (`--auto`)
+```
+/product-planning --auto user-authentication
+```
+
+Claude plays both interviewer and interviewee — asking deep questions and self-answering them with research-backed responses. No human input needed. Ideal for:
+- Another AI agent invoking this skill
+- Rapid prototyping and brainstorming
+- Generating an initial spec to refine later
+
+Auto mode is the same thorough 4-step process — just self-driven.
 
 ## Install
 

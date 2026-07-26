@@ -44,3 +44,16 @@ These scenarios test the product-planning skill's behavior. Each describes a use
 - Does NOT write any implementation code (no JavaScript, no React components)
 - Ends with "I'm ready to implement this feature" or similar
 - The spec file contains all 4 sections (Problem, Technical Design, Implementation Details, Risk Assessment)
+
+## Scenario: Auto mode self-interviews without waiting
+
+**Prompt**: "Run in auto mode: plan a search bar feature with autocomplete."
+
+**Expected behaviors**:
+- Skill activates and recognizes auto mode (does not wait for human input between questions)
+- Each question is asked and immediately self-answered
+- Self-answers are substantive and reference real patterns (not one-liners)
+- Spec is produced at ./specs/FEATURE-search-bar.md
+- All 4 steps complete (Product → Technical → Details → Attack)
+- Step 4 genuinely challenges the plan (finds at least 2 specific risks)
+- Ends with "I'm ready to implement this feature"
