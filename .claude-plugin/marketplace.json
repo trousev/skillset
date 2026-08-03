@@ -19,6 +19,13 @@
       "description": "Fixes Claude Code security classifier hanging when using DeepSeek API. Local stdlib Python proxy injects thinking:disabled into non-streaming requests, dropping classifier latency from ~32s to ~3s.",
       "version": "1.0.0",
       "tags": ["deepseek", "fix", "classifier", "proxy", "infrastructure"]
+    },
+    {
+      "name": "stack",
+      "source": "./plugins/stack",
+      "description": "Instructs the AI to deliver work as a stack of small, verified, CI-green PRs — one task per PR, each stacked on the previous one. Supports --merge for already-merged base PRs.",
+      "version": "1.0.0",
+      "tags": ["stack", "pr", "workflow", "git", "ci", "review"]
     }
   ]
 }
