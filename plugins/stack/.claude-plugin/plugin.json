@@ -1,0 +1,10 @@
+{
+  "name": "stack",
+  "version": "1.0.0",
+  "description": "Instructs the AI to deliver work as a stack of small, verified, CI-green PRs — one task per PR, each stacked on the previous one. Supports --merge for already-merged base PRs.",
+  "author": {
+    "name": "trousev"
+  },
+  "license": "MIT",
+  "keywords": ["stack", "PR", "pull-request", "workflow", "git", "ci"]
+}
