@@ -1,0 +1,10 @@
+{
+  "name": "deepseek-fix",
+  "version": "1.0.0",
+  "description": "Fixes Claude Code security classifier hanging when using DeepSeek API. Auto-installs a local proxy that disables thinking for non-streaming classifier requests, dropping latency from ~32s to ~3s.",
+  "author": {
+    "name": "trousev"
+  },
+  "license": "MIT",
+  "keywords": ["deepseek", "fix", "classifier", "proxy", "security"]
+}

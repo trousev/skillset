@@ -12,6 +12,13 @@
       "description": "Interactive 4-step feature planning interview: Product Questions → Technical Implementation → Implementation Details → Attack & Challenge. Outputs a complete feature spec.",
       "version": "1.2.0",
       "tags": ["planning", "product", "specs", "interview"]
+    },
+    {
+      "name": "deepseek-fix",
+      "source": "./plugins/deepseek-fix",
+      "description": "Fixes Claude Code security classifier hanging when using DeepSeek API. Local stdlib Python proxy injects thinking:disabled into non-streaming requests, dropping classifier latency from ~32s to ~3s.",
+      "version": "1.0.0",
+      "tags": ["deepseek", "fix", "classifier", "proxy", "infrastructure"]
     }
   ]
 }
