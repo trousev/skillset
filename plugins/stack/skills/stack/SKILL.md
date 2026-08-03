@@ -1,6 +1,6 @@
 ---
 name: stack
-description: "Instructs the AI to deliver work as a stack of small, focused PRs — one task per PR, each stacked on the previous one. Use when the user wants structured, reviewable, CI-verified pull requests instead of a single large merge. Supports --merge for PRs already merged to master."
+description: "Instructs the AI to deliver work as a stack of small, focused PRs — one task per PR, each stacked on the previous one. Use when the user wants structured, reviewable, CI-verified pull requests instead of a single large merge. With --merge: fully autonomous — create PRs, wait for CI, and merge them all. Without --merge: create PRs but leave merging to the human."
 argument-hint: "[--merge]"
 ---
 
@@ -45,16 +45,29 @@ chore/description
 
 **Never use generic names** like `feature/updates`, `fix/bug`, `dev-branch`.
 
-## `--merge` Flag
+## `--merge` Flag — Autonomous Mode
 
-When the user invokes `/stack --merge`, it means **some PRs in the stack are already merged to master**. You must:
+When the user invokes `/stack --merge`, you are in **autonomous mode**. This means:
 
-1. **Check `git log` and `git branch -r`** to determine which branches are already merged.
-2. **Rebase remaining branches** onto the new master (or the merged PR's merge commit).
-3. **Do NOT** reopen or recreate already-merged PRs.
-4. **Continue** building the stack from where the merged PRs left off.
+- You plan, implement, create PRs, **and merge them all** — without asking for confirmation on each merge.
+- After each PR passes CI, you merge it immediately and move to the next.
+- You do NOT stop to ask "shall I merge?" — the `--merge` flag IS the user's pre-authorization to merge.
 
-Without `--merge`: assume nothing is merged yet. Build the entire stack from scratch.
+Without `--merge`: you are in **manual mode**. You still plan, implement, and create PRs — but you **do NOT merge**. You stop after creating each PR (or at the end of the stack) and tell the user the PRs are ready for review. The human decides when to merge.
+
+### Merge Strategy
+
+When merging autonomously, use the repository's preferred merge method:
+
+```bash
+# Check what the repo uses (look at merged PRs or .github/ settings)
+gh pr view <pr-number> --json mergedBy,state
+
+# Default to --squash for clean history unless the repo clearly uses --merge
+gh pr merge <branch-name> --squash --auto --delete-branch
+```
+
+**Always use `--auto`** when available — it tells GitHub to merge as soon as all required checks pass, rather than polling CI yourself. If `--auto` is not supported or the repo has no required checks, poll with `gh pr checks --watch` and merge immediately after.
 
 ## Workflow
 
@@ -131,11 +144,12 @@ For each PR in the stack, from first to last:
    - If CI fails: fix the branch, push again, wait for re-run. Do NOT open the next PR while CI is red.
    - If CI passes: move to the next PR or merge.
 
-7. **Merge** — once CI is green AND the PR is complete:
+7. **Merge** (if `--merge` mode) — once CI is green AND the PR is complete:
    ```bash
-   gh pr merge <branch-name> --merge   # or --squash, per project convention
+   gh pr merge <branch-name> --squash --delete-branch
    ```
    If the project requires PR approval: wait for it. Don't bypass branch protection.
+   If NOT in `--merge` mode: **stop here** — the PR is ready for human review. Do NOT merge.
 
 8. **Update the stack** — after merging, rebase remaining unmerged branches:
    ```bash
@@ -156,14 +170,27 @@ After all PRs are merged to master:
 2. **Run the full test suite one last time** to verify the entire stack integrates correctly.
 
 3. **Report the result**:
+
+   **With `--merge`** (autonomous — all merged):
    ```
    ## Stack Complete ✓
    
-   ✅ PR #1: <title> — <link>
-   ✅ PR #2: <title> — <link>
-   ✅ PR #3: <title> — <link>
+   ✅ PR #1: <title> — <link> (merged)
+   ✅ PR #2: <title> — <link> (merged)
+   ✅ PR #3: <title> — <link> (merged)
    
    All checks green. All PRs merged.
+   ```
+
+   **Without `--merge`** (manual — PRs open, not merged):
+   ```
+   ## Stack Ready for Review
+   
+   🔵 PR #1: <title> — <link> (CI ✅)
+   🔵 PR #2: <title> — <link> (CI ✅)
+   🔵 PR #3: <title> — <link> (CI ✅)
+   
+   All checks green. PRs are open and ready for your review.
    ```
 
 ## PR Quality Standards
@@ -212,8 +239,12 @@ gh api repos/<owner>/<repo>/branches/master/protection \
 - ❌ **Opening PRs without a plan**: Don't just start coding and figure out the stack later. Plan first, then implement.
 - ❌ **"Will fix in next PR"**: Every PR must be correct and complete on its own. No deferred fixes.
 - ❌ **Not checking the repo's CLAUDE.md/AGENTS.md**: Every repo has conventions. Read them before writing code. Follow them.
+- ❌ **Asking to merge in `--merge` mode**: The `--merge` flag IS the authorization. Don't ask "shall I merge this PR?" — just merge it when CI is green.
+- ❌ **Merging without `--merge`**: The absence of `--merge` means the human wants control. Don't merge anything — open PRs and report they're ready.
 
 ## Quick Reference
+
+### With `--merge` (autonomous: create → CI → merge → next)
 
 ```bash
 # Plan
@@ -226,29 +257,49 @@ git checkout -b feature/name-1
 git push -u origin feature/name-1
 gh pr create --base master --title "Part 1: <description>" --body "..."
 gh pr checks feature/name-1 --watch
-# ... CI green? merge ...
-gh pr merge feature/name-1 --merge
+gh pr merge feature/name-1 --squash --delete-branch   # merge immediately, no questions
 
-# PR #2 — based on PR #1's branch
+# PR #2 — based on PR #1's branch (or rebase onto master if #1 merged)
 git checkout feature/name-1 && git pull
 git checkout -b feature/name-2
 # ... implement, verify locally ...
 git push -u origin feature/name-2
 gh pr create --base feature/name-1 --title "Part 2: <description>" --body "..."
-gh pr checks feature/name-2 --watch
 
 # After PR #1 is merged, rebase #2
 git checkout feature/name-2
 git rebase master
 git push --force-with-lease
 
-# PR #2 is now based on master — merge it
-gh pr merge feature/name-2 --merge
+# Merge #2
+gh pr merge feature/name-2 --squash --delete-branch
+
+# Repeat for all PRs in the stack...
 
 # Final
 git checkout master && git pull
-# Run full test suite
 ./script/test
+# Report: all merged.
+```
+
+### Without `--merge` (manual: create PRs, human merges)
+
+```bash
+# Same as above for each PR, but STOP after creating the PR and CI passing.
+# Do NOT run `gh pr merge`.
+
+# PR #1
+git checkout -b feature/name-1
+# ... implement, verify locally ...
+git push -u origin feature/name-1
+gh pr create --base master --title "Part 1: <description>" --body "..."
+gh pr checks feature/name-1 --watch
+# STOP. PR is ready. Do not merge.
+
+# ... repeat for all PRs ...
+
+# Final report:
+# All PRs open, CI green, ready for your review.
 ```
 
 ## Notes
