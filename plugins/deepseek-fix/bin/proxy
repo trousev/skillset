@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""Local proxy: inject thinking:disabled into non-streaming DeepSeek API requests.
+
+Fixes Claude Code security classifier hangs when using DeepSeek API.
+Non-streaming (stream: false) POST /v1/messages → injects thinking: disabled.
+Streaming requests and all other endpoints pass through unchanged.
+
+Usage:
+    python3 proxy [--port PORT] [--upstream URL]
+
+Environment:
+    DEEPSEEK_FIX_PORT     — listen port (default: 18920)
+    DEEPSEEK_FIX_UPSTREAM — upstream base URL (default: https://api.deepseek.com/anthropic)
+    CLAUDE_PLUGIN_DATA    — if set, used for pid file and log directory
+"""
+
+import http.client
+import http.server
+import json
+import os
+import signal
+import socket
+import sys
+import threading
+import time
+import urllib.parse
+
+VERSION = "1.0.0"
+
+# ── Configuration ────────────────────────────────────────────────────────────
+
+PORT = int(os.environ.get("DEEPSEEK_FIX_PORT", "18920"))
+UPSTREAM_BASE = os.environ.get(
+    "DEEPSEEK_FIX_UPSTREAM", "https://api.deepseek.com/anthropic"
+)
+
+_parsed_upstream = urllib.parse.urlparse(UPSTREAM_BASE)
+UPSTREAM_HOST = _parsed_upstream.netloc
+UPSTREAM_PATH_PREFIX = _parsed_upstream.path.rstrip("/")
+
+DATA_DIR = os.environ.get("CLAUDE_PLUGIN_DATA", "")
+PID_FILE = os.path.join(DATA_DIR, "proxy.pid") if DATA_DIR else None
+LOG_FILE = os.path.join(DATA_DIR, "proxy.log") if DATA_DIR else None
+
+# Global counters (protected by stats_lock)
+stats_lock = threading.Lock()
+stats = {"requests_total": 0, "injected": 0, "streaming_relayed": 0,
+         "start_time": time.time(), "last_error": None}
+
+
+# ── Request rewriting ────────────────────────────────────────────────────────
+
+def maybe_inject(body: bytes, path: str) -> tuple[bytes, bool]:
+    """If this is a non-streaming /v1/messages request, inject thinking:disabled.
+
+    Returns (modified_body, was_injected).
+    """
+    if path.rstrip("/") != "/v1/messages":
+        return body, False
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return body, False
+
+    if not isinstance(data, dict):
+        return body, False
+
+    # Only inject for non-streaming requests (the classifier path)
+    stream = data.get("stream", False)
+    if stream:
+        return body, True  # passthrough, but mark as seen
+
+    # Inject thinking: disabled to avoid reasoning-model TTFB trap
+    data["thinking"] = {"type": "disabled"}
+
+    # Strip reasoning_effort (paranoia for DeepSeek bug #1397:
+    # thinking:disabled + reasoning_effort together rejected before 2026-06-10)
+    data.pop("reasoning_effort", None)
+
+    return json.dumps(data).encode("utf-8"), True
+
+
+# ── Upstream forwarding ─────────────────────────────────────────────────────
+
+def forward_request(method: str, path: str, headers: dict,
+                    body: bytes) -> tuple[int, dict, bytes]:
+    """Forward a request to the upstream API. Returns (status, headers, body)."""
+    conn = http.client.HTTPSConnection(UPSTREAM_HOST, timeout=300)
+
+    # Build forwarding headers — drop hop-by-hop and connection-specific ones
+    fwd_headers = {}
+    for key, value in headers.items():
+        lower = key.lower()
+        if lower in ("host", "content-length", "transfer-encoding", "connection",
+                     "keep-alive", "proxy-connection", "proxy-authorization",
+                     "te", "trailer", "upgrade"):
+            continue
+        fwd_headers[key] = value
+
+    # Ensure Content-Length is correct after potential body modification
+    if body:
+        fwd_headers["Content-Length"] = str(len(body))
+
+    upstream_path = UPSTREAM_PATH_PREFIX + path if UPSTREAM_PATH_PREFIX else path
+    try:
+        conn.request(method, upstream_path, body=body, headers=fwd_headers)
+        resp = conn.getresponse()
+        resp_body = resp.read()
+        resp_headers = dict(resp.getheaders())
+        return resp.status, resp_headers, resp_body
+    except Exception as e:
+        raise
+    finally:
+        conn.close()
+
+
+def forward_streaming(method: str, path: str, headers: dict,
+                      body: bytes, wfile):
+    """Forward a streaming request, writing chunked response to wfile."""
+    conn = http.client.HTTPSConnection(UPSTREAM_HOST, timeout=300)
+
+    fwd_headers = {}
+    for key, value in headers.items():
+        lower = key.lower()
+        if lower in ("host", "content-length", "transfer-encoding", "connection",
+                     "keep-alive", "proxy-connection", "proxy-authorization",
+                     "te", "trailer", "upgrade"):
+            continue
+        fwd_headers[key] = value
+
+    if body:
+        fwd_headers["Content-Length"] = str(len(body))
+
+    upstream_path = UPSTREAM_PATH_PREFIX + path if UPSTREAM_PATH_PREFIX else path
+    try:
+        conn.request(method, upstream_path, body=body, headers=fwd_headers)
+        resp = conn.getresponse()
+
+        # Send status line
+        wfile.write(f"HTTP/1.1 {resp.status} {resp.reason}\r\n".encode())
+
+        # Send headers (skip hop-by-hop)
+        for key, value in resp.getheaders():
+            lower = key.lower()
+            if lower in ("content-length", "transfer-encoding", "connection",
+                         "keep-alive"):
+                continue
+            wfile.write(f"{key}: {value}\r\n".encode())
+
+        # Use chunked transfer encoding for streaming
+        wfile.write(b"Transfer-Encoding: chunked\r\n")
+        wfile.write(b"\r\n")
+
+        # Relay chunks
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            chunk_size = f"{len(chunk):X}\r\n".encode()
+            wfile.write(chunk_size)
+            wfile.write(chunk)
+            wfile.write(b"\r\n")
+
+        # Terminating chunk
+        wfile.write(b"0\r\n\r\n")
+    finally:
+        conn.close()
+
+
+# ── HTTP Request Handler ────────────────────────────────────────────────────
+
+class ProxyHandler(http.server.BaseHTTPRequestHandler):
+    """HTTP request handler that proxies to DeepSeek with thinking injection."""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format, *args):
+        """Suppress default stderr logging (we log to file instead)."""
+        pass
+
+    def _send_response(self, status: int, headers: dict, body: bytes,
+                       content_type: str = "application/json"):
+        """Send a non-streaming response."""
+        # Filter hop-by-hop headers
+        resp_headers = {}
+        for key, value in headers.items():
+            lower = key.lower()
+            if lower in ("transfer-encoding", "connection", "keep-alive"):
+                continue
+            resp_headers[key] = value
+
+        resp_headers["Content-Length"] = str(len(body))
+        if "content-type" not in (k.lower() for k in resp_headers):
+            resp_headers["Content-Type"] = content_type
+
+        self.send_response(status)
+        for key, value in resp_headers.items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_request(self):
+        """Main request handler."""
+        path = self.path.split("?")[0]  # strip query string
+        method = self.command
+
+        # Health check
+        if method == "GET" and path == "/health":
+            self._handle_health()
+            return
+
+        # Read request body
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+
+        # Collect request headers
+        req_headers = dict(self.headers)
+
+        # Apply injection for non-streaming /v1/messages
+        modified_body, injected = maybe_inject(body, path)
+
+        # Determine if streaming
+        is_streaming = False
+        try:
+            req_data = json.loads(body)
+            is_streaming = req_data.get("stream", False)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
+        with stats_lock:
+            stats["requests_total"] += 1
+            if injected and not is_streaming:
+                stats["injected"] += 1
+            elif is_streaming:
+                stats["streaming_relayed"] += 1
+
+        try:
+            if is_streaming:
+                # Streaming relay with chunked encoding
+                self.send_response(200)
+                forward_streaming(method, path, req_headers, modified_body,
+                                  self.wfile)
+            else:
+                status, resp_headers, resp_body = forward_request(
+                    method, path, req_headers, modified_body
+                )
+                self._send_response(status, resp_headers, resp_body)
+        except Exception as e:
+            with stats_lock:
+                stats["last_error"] = str(e)
+            error_body = json.dumps({
+                "error": f"Upstream error: {e}",
+                "type": "deepseek_fix_proxy_error"
+            }).encode()
+            self._send_response(502, {}, error_body)
+
+    def _handle_health(self):
+        """GET /health — proxy status."""
+        with stats_lock:
+            uptime = time.time() - stats["start_time"]
+            health = {
+                "status": "ok",
+                "marker": "deepseek-fix",
+                "version": VERSION,
+                "upstream": UPSTREAM_BASE,
+                "port": PORT,
+                "uptime_seconds": round(uptime, 1),
+                "requests_total": stats["requests_total"],
+                "injected": stats["injected"],
+                "streaming_relayed": stats["streaming_relayed"],
+                "last_error": stats["last_error"],
+            }
+        self._send_response(200, {}, json.dumps(health).encode())
+
+    # Route all HTTP methods to the same handler
+    do_POST = _handle_request
+    do_PUT = _handle_request
+    do_PATCH = _handle_request
+    do_DELETE = _handle_request
+    do_OPTIONS = _handle_request
+    do_GET = _handle_request
+
+
+# ── Server ───────────────────────────────────────────────────────────────────
+
+class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    """Threading HTTP server with address reuse."""
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        super().server_bind()
+
+
+def write_pid():
+    """Write PID file if CLAUDE_PLUGIN_DATA is set."""
+    if PID_FILE:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
+
+
+def remove_pid():
+    """Remove PID file on exit."""
+    if PID_FILE and os.path.exists(PID_FILE):
+        try:
+            os.remove(PID_FILE)
+        except OSError:
+            pass
+
+
+def run_server():
+    """Start the proxy server (foreground)."""
+    write_pid()
+
+    def shutdown_handler(signum, frame):
+        remove_pid()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    signal.signal(signal.SIGINT, shutdown_handler)
+
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), ProxyHandler)
+    print(f"deepseek-fix proxy v{VERSION} listening on 127.0.0.1:{PORT}")
+    print(f"Upstream: {UPSTREAM_BASE}")
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        remove_pid()
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+def parse_args():
+    """Parse command-line arguments."""
+    args = sys.argv[1:]
+    port = PORT
+    upstream = UPSTREAM_BASE
+
+    i = 0
+    while i < len(args):
+        if args[i] == "--port" and i + 1 < len(args):
+            port = int(args[i + 1])
+            i += 2
+        elif args[i] == "--upstream" and i + 1 < len(args):
+            upstream = args[i + 1]
+            i += 2
+        elif args[i] in ("-h", "--help"):
+            print(__doc__)
+            sys.exit(0)
+        else:
+            print(f"Unknown argument: {args[i]}", file=sys.stderr)
+            print(__doc__)
+            sys.exit(1)
+
+    return port, upstream
+
+
+def main():
+    global PORT, UPSTREAM_BASE, UPSTREAM_HOST, UPSTREAM_PATH_PREFIX
+    PORT, UPSTREAM_BASE = parse_args()
+    _parsed = urllib.parse.urlparse(UPSTREAM_BASE)
+    UPSTREAM_HOST = _parsed.netloc
+    UPSTREAM_PATH_PREFIX = _parsed.path.rstrip("/")
+    run_server()
+
+
+if __name__ == "__main__":
+    main()
