@@ -26,6 +26,13 @@
       "description": "Instructs the AI to deliver work as a stack of small, verified, CI-green PRs — one task per PR, each stacked on the previous one. Supports --merge for already-merged base PRs.",
       "version": "1.0.0",
       "tags": ["stack", "pr", "workflow", "git", "ci", "review"]
+    },
+    {
+      "name": "deepseek-vision",
+      "source": "./plugins/deepseek-vision",
+      "description": "Brings vision and image generation to DeepSeek-powered Claude Code sessions via OpenAI — /vision for GPT-4o image analysis with research-backed web design critique, /generate for DALL-E 3 image creation.",
+      "version": "1.0.0",
+      "tags": ["deepseek", "vision", "image", "openai", "gpt-4o", "dall-e", "web-design"]
     }
   ]
 }

@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ensure.py\"",
+            "timeout": 10,
+            "statusMessage": "deepseek-vision: checking API key"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "deepseek-vision",
+  "version": "1.0.0",
+  "description": "Brings vision and image generation to DeepSeek-powered Claude Code sessions via OpenAI — /vision for GPT-4o image analysis, /generate for DALL-E image creation.",
+  "author": {
+    "name": "trousev"
+  },
+  "license": "MIT",
+  "keywords": ["deepseek", "vision", "image", "openai", "gpt-4o", "dall-e", "web-design"]
+}
