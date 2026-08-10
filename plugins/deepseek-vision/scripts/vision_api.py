@@ -434,17 +434,17 @@ def vision(image_paths, prompt, mode="auto", model="gpt-4o",
     }
 
 
-def generate(prompt, size="1024x1024", quality="standard", style="vivid"):
-    """Generate an image via DALL-E 3.
+def generate(prompt, size="1024x1024", quality="standard", model="gpt-image-1"):
+    """Generate an image via OpenAI's image generation API.
 
     Args:
         prompt: image description
-        size: '1024x1024', '1792x1024', or '1024x1792'
-        quality: 'standard' or 'hd'
-        style: 'vivid' or 'natural'
+        size: '1024x1024', '1024x1536', or '1536x1024'
+        quality: 'low', 'medium', 'high' (model-dependent)
+        model: 'gpt-image-1', 'gpt-image-1-mini', 'gpt-image-2', or 'dall-e-3'
 
     Returns:
-        dict with keys: url (str or None), revised_prompt (str), error (str or None)
+        dict with keys: b64_json (str), error (str or None)
     """
     if not prompt or not prompt.strip():
         return {"error": "empty_prompt", "message": "Prompt must not be empty."}
@@ -460,20 +460,18 @@ def generate(prompt, size="1024x1024", quality="standard", style="vivid"):
             ),
         }
 
-    valid_sizes = {"1024x1024", "1792x1024", "1024x1792"}
+    valid_sizes = {"1024x1024", "1024x1536", "1536x1024", "auto"}
     if size not in valid_sizes:
-        return {"error": "invalid_size", "message": f"Size must be one of {valid_sizes}"}
+        return {"error": "invalid_size", "message": f"Size must be one of {sorted(valid_sizes)}"}
 
     body = {
-        "model": "dall-e-3",
+        "model": model,
         "prompt": prompt.strip(),
         "n": 1,
         "size": size,
     }
     if quality != "standard":
         body["quality"] = quality
-    if style != "vivid":
-        body["style"] = style
 
     data = json.dumps(body).encode("utf-8")
     url = "https://api.openai.com/v1/images/generations"
@@ -502,9 +500,10 @@ def generate(prompt, size="1024x1024", quality="standard", style="vivid"):
         return {"error": "network_error", "message": f"Network error: {e.reason}"}
 
     image_data = result.get("data", [{}])[0]
+    # gpt-image-* models return b64_json; dall-e-3 returns url
     return {
+        "b64_json": image_data.get("b64_json"),
         "url": image_data.get("url"),
-        "revised_prompt": image_data.get("revised_prompt", prompt),
         "error": None,
     }
 
@@ -546,33 +545,49 @@ def _cli_vision():
 
 def _cli_generate():
     import argparse
-    parser = argparse.ArgumentParser(description="DALL-E image generation")
+    parser = argparse.ArgumentParser(description="OpenAI image generation")
     parser.add_argument("prompt", help="Image description")
     parser.add_argument("--size", default="1024x1024")
     parser.add_argument("--quality", default="standard")
-    parser.add_argument("--style", default="vivid")
-    parser.add_argument("--output", "-o", help="File path to save the image")
+    parser.add_argument("--model", default="gpt-image-1")
+    parser.add_argument("--output", "-o", help="File path to save the image (required)")
     args = parser.parse_args()
 
     result = generate(args.prompt, size=args.size, quality=args.quality,
-                      style=args.style)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+                      model=args.model)
+    print(json.dumps({k: v for k, v in result.items() if k not in ("b64_json",)},
+                     indent=2, ensure_ascii=False))
 
     if result.get("error"):
         sys.exit(1)
 
-    # Download and save the image
-    if args.output and result.get("url"):
-        try:
+    # Save image from base64 or URL
+    output = args.output
+    if not output:
+        output = f"generated-{time.strftime('%Y%m%d-%H%M%S')}.png"
+
+    try:
+        b64 = result.get("b64_json")
+        if b64:
+            img_data = base64.b64decode(b64)
+            os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+            with open(output, "wb") as f:
+                f.write(img_data)
+            print(f"\nImage saved to: {output} ({len(img_data) / 1024:.0f} KB)")
+        elif result.get("url"):
             req = urllib.request.Request(result["url"])
             with urllib.request.urlopen(req, timeout=60) as resp:
                 img_data = resp.read()
-            os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-            with open(args.output, "wb") as f:
+            os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+            with open(output, "wb") as f:
                 f.write(img_data)
-            print(f"\nImage saved to: {args.output}")
-        except Exception as e:
-            print(f"\nFailed to download image: {e}")
+            print(f"\nImage saved to: {output} ({len(img_data) / 1024:.0f} KB)")
+        else:
+            print("\nNo image data returned.")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\nFailed to save image: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ Brings vision and image generation to DeepSeek-powered Claude Code sessions via 
 DeepSeek models are text-only — every screenshot, mockup, or design reference pasted into a session is invisible. This plugin bridges that gap with two skills:
 
 - **`/vision`** — GPT-4o image analysis with research-backed system prompts for web design critique, comparison, and reference-based review
-- **`/generate`** — DALL-E 3 image generation from text prompts, saved locally
+- **`/generate`** — OpenAI image generation (`gpt-image-1`) from text prompts, saved locally
 
 ## Installation
 
@@ -52,14 +52,14 @@ Analyze one or more images using GPT-4o. Auto-detects the analysis mode from you
 
 ### /generate — Image Generation
 
-Generate images from text prompts using DALL-E 3.
+Generate images from text prompts using OpenAI's image generation API.
 
 ```
 /generate "A clean SaaS dashboard with cards and data table"
-/generate "A minimalist login form" --size 1024x1792 --style natural
+/generate "A minimalist login form" --size 1024x1536
 ```
 
-Options: `--size` (1024x1024|1792x1024|1024x1792), `--quality` (standard|hd), `--style` (vivid|natural).
+Options: `--size` (1024x1024|1024x1536|1536x1024), `--quality` (standard|high), `--model` (gpt-image-1|gpt-image-1-mini|gpt-image-2|dall-e-3).
 
 ## How They Work Together
 
