@@ -33,6 +33,13 @@
       "description": "Brings vision and image generation to DeepSeek-powered Claude Code sessions via OpenAI — /vision for GPT-4o image analysis with research-backed web design critique, /generate for DALL-E 3 image creation.",
       "version": "1.0.0",
       "tags": ["deepseek", "vision", "image", "openai", "gpt-4o", "dall-e", "web-design"]
+    },
+    {
+      "name": "chrome-devtools",
+      "source": "./plugins/chrome-devtools",
+      "description": "Chrome DevTools MCP wired to a local browser — chromium by default, chrome as fallback. Resolves the browser path and a confinement-safe persistent profile automatically, so the AI can navigate, screenshot, run JavaScript, and read console and network data instead of guessing.",
+      "version": "1.0.0",
+      "tags": ["browser", "chrome", "chromium", "devtools", "mcp", "debugging"]
     }
   ]
 }

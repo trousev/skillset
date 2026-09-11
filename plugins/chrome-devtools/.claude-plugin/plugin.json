@@ -1,0 +1,10 @@
+{
+  "name": "chrome-devtools",
+  "version": "1.0.0",
+  "description": "Chrome DevTools MCP wired to a local browser, so the AI can actually look at a page instead of guessing. Resolves the browser automatically (chromium first, chrome as fallback) and uses a persistent profile that survives restarts, which keeps logins and cookies. Exposes navigate, screenshot, script evaluation, console, network and performance tools.",
+  "author": {
+    "name": "trousev"
+  },
+  "license": "MIT",
+  "keywords": ["browser", "chrome", "chromium", "devtools", "mcp", "debugging", "screenshots", "frontend"]
+}
