@@ -4,7 +4,8 @@
 Idempotent. Safe to run multiple times per session.
 
 Responsibilities:
-1. Bootstrap: ensure ANTHROPIC_BASE_URL is set in ~/.claude/settings.json
+1. Bootstrap: ensure ANTHROPIC_BASE_URL points at the proxy and that Claude
+   Code uses its own classifier requests, in ~/.claude/settings.json
 2. Lifecycle: ensure proxy daemon is running on localhost:18920
 
 Always exits 0 — SessionStart hooks should not block session startup.
@@ -21,7 +22,7 @@ import time
 import urllib.request
 import urllib.error
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 PROXY_PORT = int(os.environ.get("DEEPSEEK_FIX_PORT", "18920"))
 PROXY_URL = f"http://127.0.0.1:{PROXY_PORT}"
 PROXY_HEALTH = f"{PROXY_URL}/health"
@@ -35,6 +36,15 @@ CLAUDE_CONFIG_DIR = os.path.expanduser(
 SETTINGS_PATH = os.path.join(CLAUDE_CONFIG_DIR, "settings.json")
 BACKUP_PATH = SETTINGS_PATH + ".deepseek-fix.bak"
 PROXY_BIN = os.path.join(CLAUDE_PLUGIN_ROOT, "bin", "proxy") if CLAUDE_PLUGIN_ROOT else None
+
+# Claude Code 2.1.278+ asks the API to run auto mode's classifier checks
+# server-side. DeepSeek can't provide those checks, so Claude Code falls back
+# to its own classifier requests — but not before showing a daily notice about
+# the gateway at ANTHROPIC_BASE_URL not being eligible. Setting this to "0"
+# selects Claude Code's own classifier up front and suppresses the notice.
+# https://code.claude.com/docs/en/auto-mode-classifier-billing
+AUTO_MODE_SERVER_ENV = "CLAUDE_CODE_AUTO_MODE_SERVER"
+AUTO_MODE_SERVER_VALUE = "0"
 
 
 # ── Settings file management ─────────────────────────────────────────────────
@@ -67,8 +77,14 @@ def write_settings(settings):
     os.replace(tmp, SETTINGS_PATH)
 
 
-def ensure_env_base_url():
-    """Ensure ANTHROPIC_BASE_URL points to our proxy in settings.json.
+def ensure_env_config():
+    """Ensure settings.json env configures the proxy and the classifier mode.
+
+    - ANTHROPIC_BASE_URL points at the local proxy.
+    - CLAUDE_CODE_AUTO_MODE_SERVER=0 keeps Claude Code on its own classifier
+      requests, which the proxy can serve, instead of asking DeepSeek for
+      server-side checks it can't run. Without it, auto mode shows the
+      "classifier requests ... this session isn't eligible" notice once a day.
 
     Returns True if settings were modified (user should restart).
     """
@@ -76,33 +92,54 @@ def ensure_env_base_url():
 
     env = settings.get("env", {})
     current = env.get("ANTHROPIC_BASE_URL", "")
+    changed = []
 
-    if current == PROXY_URL:
-        return False  # Already configured
+    if current != PROXY_URL:
+        # Safety guard: refuse to override a non-DeepSeek base URL
+        if current and "deepseek" not in current:
+            print(
+                f"deepseek-fix: ANTHROPIC_BASE_URL is '{current}' — "
+                f"not a DeepSeek endpoint. Refusing to redirect. "
+                f"Set DEEPSEEK_FIX_PORT if you still want to use the proxy.",
+                file=sys.stderr,
+            )
+            return False
 
-    # Safety guard: refuse to override a non-DeepSeek base URL
-    if current and "deepseek" not in current:
+        # One-time backup of original settings
+        if os.path.exists(SETTINGS_PATH) and not os.path.exists(BACKUP_PATH):
+            with open(SETTINGS_PATH, "r") as src:
+                with open(BACKUP_PATH, "w") as dst:
+                    dst.write(src.read())
+
+        env["ANTHROPIC_BASE_URL"] = PROXY_URL
+        changed.append(f"ANTHROPIC_BASE_URL={PROXY_URL}")
+
+    # Set the classifier switch only when the user hasn't chosen a value.
+    # An explicit 1 (or anything else) is respected; warn that the notice
+    # will keep appearing in that case.
+    auto_mode_server = env.get(AUTO_MODE_SERVER_ENV)
+    if auto_mode_server is None:
+        env[AUTO_MODE_SERVER_ENV] = AUTO_MODE_SERVER_VALUE
+        changed.append(f"{AUTO_MODE_SERVER_ENV}={AUTO_MODE_SERVER_VALUE}")
+    elif str(auto_mode_server).strip() != AUTO_MODE_SERVER_VALUE:
         print(
-            f"deepseek-fix: ANTHROPIC_BASE_URL is '{current}' — "
-            f"not a DeepSeek endpoint. Refusing to redirect. "
-            f"Set DEEPSEEK_FIX_PORT if you still want to use the proxy.",
+            f"deepseek-fix: {AUTO_MODE_SERVER_ENV} is set to "
+            f"'{auto_mode_server}' — leaving it alone. Auto mode will keep "
+            f"showing the classifier billing notice. Set it to "
+            f"{AUTO_MODE_SERVER_VALUE} to silence the notice.",
             file=sys.stderr,
         )
-        return False
 
-    # One-time backup of original settings
-    if os.path.exists(SETTINGS_PATH) and not os.path.exists(BACKUP_PATH):
-        with open(SETTINGS_PATH, "r") as src:
-            with open(BACKUP_PATH, "w") as dst:
-                dst.write(src.read())
+    if not changed:
+        return False  # Already configured
 
-    # Merge env key, preserving all other settings
-    settings["env"] = {**env, "ANTHROPIC_BASE_URL": PROXY_URL}
+    # Merge env keys, preserving all other settings
+    settings["env"] = env
     write_settings(settings)
 
     print(
-        f"deepseek-fix: Set ANTHROPIC_BASE_URL={PROXY_URL} in {SETTINGS_PATH}.\n"
-        f"  This overrides any shell export of ANTHROPIC_BASE_URL.\n"
+        f"deepseek-fix: Set {', '.join(changed)} in {SETTINGS_PATH}.\n"
+        f"  This overrides any shell export of those variables.\n"
         f"  Restart Claude Code to apply. Original settings backed up to {BACKUP_PATH}."
     )
     return True
@@ -248,8 +285,8 @@ def ensure_proxy_running():
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    # Step 1: Bootstrap ANTHROPIC_BASE_URL in settings
-    modified = ensure_env_base_url()
+    # Step 1: Bootstrap env config in settings
+    modified = ensure_env_config()
 
     if modified:
         # Settings were just written — proxy isn't needed yet

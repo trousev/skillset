@@ -16,8 +16,8 @@
     {
       "name": "deepseek-fix",
       "source": "./plugins/deepseek-fix",
-      "description": "Fixes Claude Code security classifier hanging when using DeepSeek API. Local stdlib Python proxy injects thinking:disabled into non-streaming requests, dropping classifier latency from ~32s to ~3s.",
-      "version": "1.0.0",
+      "description": "Fixes Claude Code security classifier problems when using DeepSeek API. Local stdlib Python proxy injects thinking:disabled into non-streaming requests, dropping classifier latency from ~32s to ~3s, and suppresses the recurring auto mode classifier billing notice for gateway sessions.",
+      "version": "1.0.1",
       "tags": ["deepseek", "fix", "classifier", "proxy", "infrastructure"]
     },
     {
