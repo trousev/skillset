@@ -1,6 +1,6 @@
 ---
 name: deepseek-fix
-description: "Diagnose and fix the DeepSeek + Claude Code security classifier hang. Use when risky Bash commands (scp, ssh, docker compose) hang in a 'security classifier temporarily unavailable' retry loop, or to verify, restart, or uninstall the deepseek-fix proxy."
+description: "Diagnose and fix DeepSeek + Claude Code security classifier problems. Use when risky Bash commands (scp, ssh, docker compose) hang in a 'security classifier temporarily unavailable' retry loop, when auto mode shows the recurring 'classifier requests … this session isn't eligible' gateway notice, or to verify, restart, or uninstall the deepseek-fix proxy."
 ---
 
 # deepseek-fix: Diagnostic & Recovery
@@ -15,15 +15,17 @@ Check if the fix is working:
 # Check proxy status
 curl -s http://localhost:18920/health | python3 -m json.tool
 
-# Check if ANTHROPIC_BASE_URL is configured
+# Check if ANTHROPIC_BASE_URL and the auto mode classifier switch are configured
 python3 -c "
 import json, os
 s = json.load(open(os.path.expanduser('~/.claude/settings.json')))
-print('ANTHROPIC_BASE_URL:', s.get('env', {}).get('ANTHROPIC_BASE_URL', 'NOT SET'))
+env = s.get('env', {})
+print('ANTHROPIC_BASE_URL:', env.get('ANTHROPIC_BASE_URL', 'NOT SET'))
+print('CLAUDE_CODE_AUTO_MODE_SERVER:', env.get('CLAUDE_CODE_AUTO_MODE_SERVER', 'NOT SET'))
 "
 ```
 
-Expected: `ANTHROPIC_BASE_URL` should be `http://localhost:18920`, and the health check should return `"status": "ok"`.
+Expected: `ANTHROPIC_BASE_URL` should be `http://localhost:18920`, `CLAUDE_CODE_AUTO_MODE_SERVER` should be `0`, and the health check should return `"status": "ok"`.
 
 ## Restart the Proxy
 
@@ -58,20 +60,24 @@ ls "${CLAUDE_PLUGIN_DATA}/proxy.log" 2>/dev/null && tail -50 "${CLAUDE_PLUGIN_DA
 | Shell `ANTHROPIC_BASE_URL` still active | Shell export overrides settings | Check `~/.zshrc` for `export ANTHROPIC_BASE_URL=...` — comment it out or remove it, then restart Claude Code |
 | "Refusing to redirect a non-DeepSeek provider" | You're not using DeepSeek | This plugin is only for DeepSeek users. Disable it: `/plugin disable deepseek-fix` |
 | Classifier still hangs after setup | ANTHROPIC_BASE_URL not taking effect | Must restart Claude Code after bootstrap. ANTHROPIC_BASE_URL is read once at startup. |
+| Recurring notice: "We're changing auto mode to no longer charge for classifier requests… this session isn't eligible… 127.0.0.1:18920" | Claude Code asks the gateway for server-side classifier checks DeepSeek can't run | Ensure `CLAUDE_CODE_AUTO_MODE_SERVER=0` is in the `env` key of `~/.claude/settings.json` (run `ensure.py`, or set it manually), then restart Claude Code |
+| Auto mode says "can't check actions in this session" | `CLAUDE_CODE_AUTO_MODE_SERVER=1` is set explicitly | Remove it or set it to `0`, then restart Claude Code |
 
 ## Uninstall
 
 To fully remove the deepseek-fix plugin:
 
 1. **Stop the proxy**: `pkill -f "bin/proxy"`
-2. **Restore settings**: Remove `ANTHROPIC_BASE_URL` from `~/.claude/settings.json` under the `env` key:
+2. **Restore settings**: Remove `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_AUTO_MODE_SERVER` from `~/.claude/settings.json` under the `env` key:
    ```bash
    python3 -c "
    import json, os
    path = os.path.expanduser('~/.claude/settings.json')
    s = json.load(open(path))
-   s.get('env', {}).pop('ANTHROPIC_BASE_URL', None)
-   if not s['env']: del s['env']
+   env = s.get('env', {})
+   env.pop('ANTHROPIC_BASE_URL', None)
+   env.pop('CLAUDE_CODE_AUTO_MODE_SERVER', None)
+   if not env: s.pop('env', None)
    json.dump(s, open(path, 'w'), indent=2)
    print('Restored')
    "
